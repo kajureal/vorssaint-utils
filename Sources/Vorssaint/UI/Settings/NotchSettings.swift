@@ -40,7 +40,7 @@ struct NotchSettings: View {
     @AppStorage(DefaultsKey.notchSilhouette) private var silhouette = NotchSilhouette.capsule.rawValue
     @AppStorage(DefaultsKey.notchOpenOnHover) private var hover = false
     @AppStorage(DefaultsKey.notchShortcutEnabled) private var shortcutEnabled = false
-    @AppStorage(DefaultsKey.notchHideInFullscreen) private var hideInFullscreen = false
+    @AppStorage(DefaultsKey.notchHideInFullscreen) private var hideInFullscreen = true
     @AppStorage(DefaultsKey.notchHideUntilHover) private var hideUntilHover = false
     @AppStorage(DefaultsKey.notchCoversMenus) private var coversMenus = true
     @AppStorage(DefaultsKey.notchHoverDelay) private var hoverDelay = NotchSupport.defaultHoverDelay
