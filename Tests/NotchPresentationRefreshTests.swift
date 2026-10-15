@@ -486,21 +486,17 @@ enum NotchPresentationRefreshContract {
         fullscreen.compactActivityIsVisible = true
         fullscreen.hiddenInFullscreen = true
         fullscreen.refreshPresentation()
-        suite.expect(fullscreen.panel?.isVisible == true && !fullscreen.acceptsSystemFeedback
-                     && fullscreen.acceptsUserInteraction && fullscreen.panel?.level == NotchPanel.normalLevel
-                     && fullscreen.edgeClicksEnabled && fullscreen.windowHost?.targetSize == fullscreen.geometry.restingSize(showsContent: false)
-                     && fullscreen.windowHost?.activationRect.size == fullscreen.geometry.restingSize(showsContent: false),
-                     "fullscreen keeps a black, clickable cutout without automatic feedback or activity wings")
-        fullscreen.windowHost?.activate?()
+        suite.expect(fullscreen.panel?.isVisible == false && !fullscreen.acceptsSystemFeedback
+                     && !fullscreen.acceptsUserInteraction && !fullscreen.edgeClicksEnabled,
+                     "fullscreen hides physical-notch overlays and blocks clicks and feedback")
+        fullscreen.expanded = true
         fullscreen.refreshPresentation()
-        suite.expect(fullscreen.expanded && fullscreen.panel?.isVisible == true
-                     && fullscreen.acceptsUserInteraction && !fullscreen.acceptsSystemFeedback
-                     && fullscreen.windowHost?.targetSize == fullscreen.surfaceSize,
-                     "clicking the fullscreen cutout opens the island")
+        suite.expect(fullscreen.panel?.isVisible == false && !fullscreen.acceptsUserInteraction,
+                     "a late opening or asynchronous presentation cannot reveal the fullscreen island")
         fullscreen.collapse()
         fullscreen.refreshPresentation()
-        suite.expect(fullscreen.panel?.isVisible == true && fullscreen.windowHost?.targetSize == fullscreen.geometry.restingSize(showsContent: false),
-                     "closing in fullscreen returns to the clickable black cutout")
+        suite.expect(fullscreen.panel?.isVisible == false,
+                     "collapsing during fullscreen keeps the entire overlay hidden")
         fullscreen.hiddenInFullscreen = false
         fullscreen.refreshPresentation()
         suite.expect(fullscreen.panel?.isVisible == true && fullscreen.acceptsSystemFeedback,
@@ -533,13 +529,12 @@ enum NotchPresentationRefreshContract {
         UserDefaults.standard.coversMenus = false
         fullscreenSimulated.refreshPresentation(animated: false)
         suite.expect(fullscreenSimulated.panel?.isVisible == false && !fullscreenSimulated.edgeClicksEnabled
-                     && fullscreenSimulated.acceptsUserInteraction,
+                     && !fullscreenSimulated.acceptsUserInteraction,
                      "a simulated cutout with no camera to cover stays out of full-screen content")
         fullscreenSimulated.expanded = true
         fullscreenSimulated.refreshPresentation(animated: false)
-        suite.expect(fullscreenSimulated.panel?.isVisible == true
-                     && fullscreenSimulated.panel?.level == NotchPanel.fullscreenLevel,
-                     "a simulated island opened by a shortcut yields to the menu bar in fullscreen")
+        suite.expect(fullscreenSimulated.panel?.isVisible == false,
+                     "a simulated island stays hidden even if an opening was already queued")
         fullscreenSimulated.collapse()
         fullscreenSimulated.refreshPresentation(animated: false)
         suite.expect(fullscreenSimulated.panel?.isVisible == false,

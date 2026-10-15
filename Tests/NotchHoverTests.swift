@@ -282,11 +282,11 @@ enum NotchHoverTests {
         let blackSize = fullscreen.surfaceSize
         fullscreen.hover(true)
         suite.expect(blackSize == fullscreen.geometry.restingSize(showsContent: false)
-                     && !fullscreen.hoverEmphasized && fullscreen.hoverWork != nil,
-                     "fullscreen keeps the cutout black but schedules configured hover access even with cached music")
+                     && !fullscreen.hoverEmphasized && fullscreen.hoverWork == nil,
+                     "fullscreen refuses hover reveals even with cached music")
         DispatchQueue.main.advance(0.26)
-        suite.expect(fullscreen.peeking && fullscreen.openings == 0,
-                     "hover preview remains available from the black fullscreen cutout")
+        suite.expect(!fullscreen.peeking && fullscreen.openings == 0,
+                     "fullscreen stays hidden after the hover delay")
         let simulatedFullscreen = fixture()
         simulatedFullscreen.hiddenInFullscreen = true
         simulatedFullscreen.hover(true)

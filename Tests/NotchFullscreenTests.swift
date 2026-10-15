@@ -51,7 +51,18 @@ enum NotchFullscreenTests {
         static var reads = 0
         static func topology() -> Topology? { reads += 1; return value }
     }
+    enum NotchFullscreenSupport {
+        static var desktopDisplays: Set<CGDirectDisplayID> = []
+        static func activeDisplays() -> Set<CGDirectDisplayID> {
+            let topology = SpaceWindowBridge.topology()
+            return Set([CGDirectDisplayID(1), 2].filter {
+                topology?.isFullscreen(on: $0, separateSpaces: NSScreen.screensHaveSeparateSpaces) == true
+            }).union(desktopDisplays)
+        }
+    }
     class State {
+        var fullscreenTimer: Timer?
+        deinit { fullscreenTimer?.invalidate() }
         var running = true, suspended = false, hiddenInFullscreen = false
         var hoverEmphasized = false
         var panel: Bool? = true
@@ -149,10 +160,61 @@ enum NotchFullscreenTests {
         idle.fullscreenEnvironmentDidChange()
         suite.expect(idle.screenUpdates == 0 && idle.consumerSyncs == 0 && idle.refreshes == 0,
                      "with the option off, app and Space changes do no fullscreen work")
-        suite.expect(Defaults.registeredDefaults[DefaultsKey.notchHideInFullscreen] as? Bool == false
+        suite.expect(Defaults.registeredDefaults[DefaultsKey.notchHideInFullscreen] as? Bool == true
                      && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchHideInFullscreen),
-                     "fullscreen hiding is opt-in and included in settings backup")
+                     "fullscreen hiding defaults on and is included in settings backup")
         volumeLifecycleChecks(topology, suite)
+        desktopAndMonitoringChecks(suite)
+    }
+
+    private static func desktopAndMonitoringChecks(_ suite: TestSuite) {
+        let screen = CGRect(x: -1440, y: -900, width: 1440, height: 900)
+        suite.expect(Service.coversDisplay(screen, display: screen),
+                     "desktop fullscreen recognizes negative display coordinates")
+        suite.expect(!Service.coversDisplay(screen.insetBy(dx: 0, dy: 24), display: screen)
+                     && !Service.coversDisplay(CGRect(x: 0, y: 0, width: 1440, height: 900), display: screen)
+                     && !Service.coversDisplay(.zero, display: .zero),
+                     "maximized windows, other displays and empty bounds are not fullscreen")
+        func window(pid: Int32 = 42, layer: Int = 0, alpha: Double = 1, bounds: CGRect? = nil) -> [String: Any] {
+            [kCGWindowOwnerPID as String: NSNumber(value: pid),
+             kCGWindowLayer as String: NSNumber(value: layer),
+             kCGWindowAlpha as String: NSNumber(value: alpha),
+             kCGWindowBounds as String: (bounds ?? screen).dictionaryRepresentation]
+        }
+        let displays: [CGDirectDisplayID: CGRect] = [2: screen, 1: CGRect(x: 0, y: 0, width: 1440, height: 900)]
+        suite.expect(Service.desktopFullscreenDisplays([window()], ownerPID: 42, displays: displays) == [2],
+                     "foreground desktop video hides only the display its window fills")
+        suite.expect(Service.desktopFullscreenDisplays([window(pid: 99), window(layer: 10), window(alpha: 0),
+                                                       window(bounds: screen.insetBy(dx: 0, dy: 24)), [:]],
+                                                      ownerPID: 42, displays: displays).isEmpty,
+                     "other apps, floating overlays, transparent, maximized and malformed windows are ignored")
+        UserDefaults.standard.enabled = true
+        SpaceWindowBridge.value = nil
+        NotchFullscreenSupport.desktopDisplays = [2]
+        defer { NotchFullscreenSupport.desktopDisplays = [] }
+        let service = Service()
+        service.updateFullscreenVisibility(displayID: 2)
+        suite.expect(service.hiddenInFullscreen && !service.acceptsUserInteraction && !service.acceptsSystemFeedback,
+                     "desktop fullscreen hides even without Space APIs and blocks reveals and feedback")
+        service.screenUpdate = { [weak service] in service?.updateFullscreenVisibility(displayID: 2) }
+        service.syncFullscreenMonitoring()
+        let timer = service.fullscreenTimer!
+        suite.expect(timer.timeInterval == 0.5, "fullscreen polling remains active while the island is hidden")
+        NotchFullscreenSupport.desktopDisplays = []
+        timer.fire()
+        suite.expect(!service.hiddenInFullscreen && service.refreshes == 1 && service.acceptsUserInteraction,
+                     "timer restores the island when desktop fullscreen ends without a Space or app change")
+        service.syncFullscreenMonitoring()
+        suite.expect(service.fullscreenTimer === timer, "preference sync reuses the existing timer")
+        service.suspended = true
+        service.syncFullscreenMonitoring()
+        suite.expect(service.fullscreenTimer == nil && !timer.isValid, "suspending the session stops fullscreen polling")
+        service.suspended = false
+        service.syncFullscreenMonitoring()
+        let resumed = service.fullscreenTimer!
+        UserDefaults.standard.enabled = false
+        service.syncFullscreenMonitoring()
+        suite.expect(service.fullscreenTimer == nil && !resumed.isValid, "disabling fullscreen hiding stops polling")
     }
 
     private static func volumeLifecycleChecks(_ topology: Topology, _ suite: TestSuite) {

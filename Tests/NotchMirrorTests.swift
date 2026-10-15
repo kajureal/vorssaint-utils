@@ -65,6 +65,10 @@ enum NotchMirrorContract {
         static func topology() -> Topology? { Topology() }
     }
 
+    enum NotchFullscreenSupport {
+        static func activeDisplays() -> Set<CGDirectDisplayID> { SpaceWindowBridge.fullscreen }
+    }
+
     class State {
         var showsOnAllDisplays = true, running = true, suspended = false
         var windowHost: Host? = Host()
