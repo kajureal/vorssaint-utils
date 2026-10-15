@@ -1480,7 +1480,7 @@ enum Defaults {
         DefaultsKey.notchOpenOnHover: false,
         DefaultsKey.notchShortcutEnabled: false,
         DefaultsKey.notchShortcut: GlobalShortcut.notchDefault.storageValue,
-        DefaultsKey.notchHideInFullscreen: false,
+        DefaultsKey.notchHideInFullscreen: true,
         DefaultsKey.notchHideUntilHover: false,
         DefaultsKey.notchCoversMenus: true,
         DefaultsKey.notchLowBatteryTint: false,
