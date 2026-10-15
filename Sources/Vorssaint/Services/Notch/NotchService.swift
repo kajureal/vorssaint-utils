@@ -395,8 +395,9 @@ final class NotchService: ObservableObject {
     private var musicTitleWork: DispatchWorkItem?
     private static let musicTitleDuration: TimeInterval = 4
     private var mirrors: [CGDirectDisplayID: NotchMirror] = [:]
-    /// Displays showing a full-screen Space, read as Spaces change.
+    /// Displays showing native or desktop fullscreen content.
     private var fullscreenDisplays: Set<CGDirectDisplayID> = []
+    private var fullscreenTimer: Timer?
     private var pointerMonitors: [Any] = []
     private var pointerFollowWork: DispatchWorkItem?
     /// How long the pointer stays on another display before the island
@@ -413,13 +414,12 @@ final class NotchService: ObservableObject {
             && !expanded && !peeking && !dragPlaceholder && captureControls == nil
     }
 
-    /// Full screen keeps a clickable black cutout until the user opens it.
+    /// Compact measurements used while the fullscreen island is concealed.
     var fullscreenCompact: Bool {
         hiddenInFullscreen && !expanded && !peeking
     }
 
-    /// A simulated cutout covers no camera, so in full screen it stays out
-    /// of the picture until a shortcut opens it.
+    /// Retained for compact layout eligibility; presentation hides all silhouettes.
     private var hiddenAtRestInFullscreen: Bool {
         fullscreenCompact && !geometry.isNotched
     }
@@ -1047,9 +1047,9 @@ final class NotchService: ObservableObject {
     }
 
     var presentationWindow: NSPanel? { panel }
-    /// User actions can open the island even when automatic full-screen feedback is hidden.
+    /// Fullscreen content keeps every island entry point quiet.
     var acceptsUserInteraction: Bool {
-        running && !suspended && panel != nil
+        running && !suspended && !hiddenInFullscreen && panel != nil
             && windowHost?.isConcealedForMissionControl != true
     }
     var acceptsSystemFeedback: Bool {
@@ -1125,6 +1125,7 @@ final class NotchService: ObservableObject {
         showsOnAllDisplays = displayPreference == .all
         updateFullscreenDisplays()
         updateScreen()
+        syncFullscreenMonitoring()
         syncPointerFollowing()
         syncGestures()
         NotchTimerService.shared.syncWithPreferences()
@@ -1234,6 +1235,7 @@ final class NotchService: ObservableObject {
     }
 
     private func tearDownPresentation() {
+        fullscreenTimer?.invalidate(); fullscreenTimer = nil
         screenRefreshWork?.cancel(); screenRefreshWork = nil
         nextMascotVisitWork?.cancel(); nextMascotVisitWork = nil
         mascotVisitWork?.cancel(); mascotVisitWork = nil
@@ -1367,7 +1369,7 @@ final class NotchService: ObservableObject {
         guard NotchSupport.isEnabled(), !suspended else { return }
         if !running || self.panel == nil { syncWithPreferences() }
         else { refreshModules() }
-        guard let panel else { return }
+        guard acceptsUserInteraction, let panel else { return }
         let reopening = reopeningDestination
         let useReopeningSurface = module == nil && !expanded && !appPanel && !sections && metric == nil
         let destination = module.flatMap { modules.contains($0) ? $0 : nil } ?? reopening.module
@@ -1503,7 +1505,7 @@ final class NotchService: ObservableObject {
     }
 
     func hover(_ entered: Bool) {
-        guard running, !suspended, !hiddenAtRestInFullscreen else { removeHoverExitMonitors(); return }
+        guard running, !suspended, !hiddenInFullscreen else { removeHoverExitMonitors(); return }
         let point = NSEvent.mouseLocation
         let wasInside = inside
         let showedPicker = showsCompactActivityPicker
@@ -2533,6 +2535,15 @@ final class NotchService: ObservableObject {
     }
 
     func refreshPresentation(animated: Bool = true, transitionContent: NotchContentTransition = .none) {
+        // No cutout, banners, quick-access buttons or hover targets over content.
+        // Every presentation path passes here, including asynchronous notices.
+        guard !hiddenInFullscreen else {
+            windowHost?.hide(animated: false)
+            panel?.orderOut(nil)
+            removeScreenEdgeClickMonitors()
+            syncMirrors()
+            return
+        }
         // A notice with a new reading, or the music strip naming its song,
         // fits its new width in place.
         let fitsInPlace = noticeFitsInPlace && notice != nil && !noticeExpanded
@@ -3077,12 +3088,9 @@ final class NotchService: ObservableObject {
     /// Only the copies ask which displays are in full screen, and only when
     /// the island hides there; the island asks for its own display.
     private func updateFullscreenDisplays() {
-        guard showsOnAllDisplays, UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen),
-              let topology = SpaceWindowBridge.topology() else { fullscreenDisplays = []; return }
-        let separate = NSScreen.screensHaveSeparateSpaces
-        fullscreenDisplays = Set(NSScreen.screens.map(\.notchDisplayID).filter {
-            topology.isFullscreen(on: $0, separateSpaces: separate)
-        })
+        guard showsOnAllDisplays, UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
+        else { fullscreenDisplays = []; return }
+        fullscreenDisplays = NotchFullscreenSupport.activeDisplays()
     }
 
     /// A click on a copy brings the island to its display, open, closing it
@@ -3391,7 +3399,7 @@ final class NotchService: ObservableObject {
 
     private func updateFullscreenVisibility(displayID: CGDirectDisplayID) {
         let hidden = UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
-            && SpaceWindowBridge.topology()?.isFullscreen(on: displayID, separateSpaces: NSScreen.screensHaveSeparateSpaces) == true
+            && NotchFullscreenSupport.activeDisplays().contains(displayID)
         guard hidden != hiddenInFullscreen else { return }
         hiddenInFullscreen = hidden
         if hidden {
@@ -3413,8 +3421,24 @@ final class NotchService: ObservableObject {
         if AppFeature.brightness.isAvailable { BrightnessService.shared.syncWithPreferences() }
     }
 
+    /// Video players can cover a desktop without changing Spaces or apps.
+    /// Keep checking while hidden so exiting fullscreen always restores it.
+    private func syncFullscreenMonitoring() {
+        guard running, !suspended, UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen) else {
+            fullscreenTimer?.invalidate(); fullscreenTimer = nil
+            return
+        }
+        guard fullscreenTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.fullscreenEnvironmentDidChange()
+        }
+        timer.tolerance = 0.1
+        fullscreenTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     private func fullscreenEnvironmentDidChange() {
-        // Only the opt-in option depends on Spaces and the active app.
+        // Only fullscreen hiding depends on Spaces and the active app.
         guard running, !suspended,
               hiddenInFullscreen || UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
         else { return }
